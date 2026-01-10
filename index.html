@@ -1,586 +1,198 @@
 <!DOCTYPE html>
-
-<html lang="en">
+<html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <title>Gesture Swords</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Sword Storm - MediaPipe & Three.js</title>
     <style>
-        * { 
-            margin: 0; 
-            padding: 0; 
-            box-sizing: border-box;
-            -webkit-tap-highlight-color: transparent;
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+        canvas { display: block; }
+        #info {
+            position: absolute; top: 10px; left: 10px; color: #00ff00;
+            background: rgba(0,0,0,0.7); padding: 10px; pointer-events: none;
+            border-radius: 5px; font-size: 12px;
         }
-        body { 
-            overflow: hidden; 
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            touch-action: none;
-        }
-        #container { 
-            position: relative; 
-            width: 100vw; 
-            height: 100vh;
-            height: 100dvh; /* iOS dynamic viewport */
-        }
-        #canvas3d { 
-            position: absolute; 
-            top: 0; 
-            left: 0; 
-            width: 100%; 
-            height: 100%;
-            touch-action: none;
-        }
-        #video { 
-            position: absolute; 
-            top: 10px; 
-            right: 10px; 
-            width: 160px; 
-            height: 120px; 
-            border: 2px solid #00ff00; 
-            border-radius: 8px; 
-            transform: scaleX(-1);
-            display: none; /* Hidden until camera starts */
-        }
-        @media (min-width: 768px) {
-            #video {
-                width: 240px;
-                height: 180px;
-            }
-        }
-        #info { 
-            position: absolute; 
-            top: 10px; 
-            left: 10px; 
-            color: #00ff00; 
-            background: rgba(0,0,0,0.7); 
-            padding: 10px 12px; 
-            border-radius: 8px; 
-            font-size: 12px; 
-            line-height: 1.5;
-            max-width: 200px;
-        }
-        @media (min-width: 768px) {
-            #info {
-                font-size: 14px;
-                padding: 15px;
-                max-width: none;
-            }
-        }
-        #status { 
-            position: absolute; 
-            bottom: 20px; 
-            left: 50%; 
-            transform: translateX(-50%);
-            color: #fff; 
-            background: rgba(0,0,0,0.8); 
-            padding: 12px 24px; 
-            border-radius: 25px; 
-            font-size: 14px; 
-            font-weight: bold;
-            text-align: center;
-            max-width: 90vw;
-        }
-        #startBtn {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            padding: 20px 40px;
-            font-size: 18px;
-            font-weight: bold;
-            color: white;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border: none;
-            border-radius: 50px;
-            cursor: pointer;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-            z-index: 1000;
-            transition: transform 0.2s;
-        }
-        #startBtn:active {
-            transform: translate(-50%, -50%) scale(0.95);
-        }
-        .hint {
-            font-size: 10px;
-            opacity: 0.8;
-            margin-top: 8px;
-        }
+        #video-container { position: absolute; bottom: 10px; right: 10px; width: 150px; border: 2px solid #555; }
+        #webcam { width: 100%; transform: scaleX(-1); }
     </style>
 </head>
 <body>
-    <div id="container">
-        <canvas id="canvas3d"></canvas>
-        <video id="video" autoplay playsinline muted></video>
-        <div id="info">
-            <div>State: <span id="state">SCATTER</span></div>
-            <div>Swords: <span id="count">1000</span></div>
-            <div>FPS: <span id="fps">--</span></div>
-            <div class="hint">
-                ✋ Open → SCATTER<br>
-                ✊ Fist → ORBIT<br>
-                👆 Point → FORMATION
-            </div>
-        </div>
-        <div id="status">Loading...</div>
-        <button id="startBtn">START EXPERIENCE</button>
-    </div>
 
-```
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<div id="info">
+    <b>SWORD STORM DEMO</b><br>
+    Trạng thái: <span id="status">Đang khởi tạo...</span><br>
+    Cử chỉ: <span id="gesture">N/A</span><br>
+    - Xòe tay: Orbit (Xoay quanh)<br>
+    - Nắm tay: Formation (Hội tụ)<br>
+    - Di chuyển nhanh: Scatter (Tán loạn)
+</div>
 
-<script>
-    // ============================================
-    // iOS & MOBILE COMPATIBILITY LAYER
-    // ============================================
-    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+<div id="video-container">
+    <video id="webcam" autoplay playsinline></video>
+</div>
 
-    // Adjust config for mobile
-    const CONFIG = {
-        swordCount: isMobile ? 500 : 1000,
-        handSmoothingFactor: isIOS ? 0.4 : 0.3,
-        scatterRadius: 15,
-        orbitRadius: 3,
-        formationRadius: 5,
-        attractionStrength: 0.05,
-        maxSpeed: 0.3,
-        damping: 0.92,
-        videoWidth: isMobile ? 480 : 640,
-        videoHeight: isMobile ? 360 : 480
-    };
-
-    // ============================================
-    // HAND TRACKING MODULE
-    // ============================================
-    class HandTracker {
-        constructor() {
-            this.palmPosition = new THREE.Vector3();
-            this.smoothedPalm = new THREE.Vector3();
-            this.palmVelocity = new THREE.Vector3();
-            this.lastPalm = new THREE.Vector3();
-            this.fingerDistances = [];
-            this.isTracking = false;
-            this.gestureHistory = [];
-            this.maxHistory = 5;
+<script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
         }
-
-        update(landmarks) {
-            if (!landmarks || landmarks.length === 0) {
-                this.isTracking = false;
-                return;
-            }
-
-            this.isTracking = true;
-            const hand = landmarks[0];
-
-            // Palm center
-            const wrist = hand[0];
-            const middleBase = hand[9];
-            this.palmPosition.set(
-                (wrist.x + middleBase.x) / 2 - 0.5,
-                -(wrist.y + middleBase.y) / 2 + 0.5,
-                -(wrist.z + middleBase.z) / 2
-            );
-
-            // Smooth palm
-            this.smoothedPalm.lerp(this.palmPosition, CONFIG.handSmoothingFactor);
-
-            // Velocity
-            this.palmVelocity.copy(this.smoothedPalm).sub(this.lastPalm);
-            this.lastPalm.copy(this.smoothedPalm);
-
-            // Finger distances
-            this.fingerDistances = [8, 12, 16, 20].map(i => {
-                const tip = hand[i];
-                return Math.hypot(
-                    tip.x - this.palmPosition.x,
-                    tip.y - this.palmPosition.y,
-                    tip.z - this.palmPosition.z
-                );
-            });
-        }
-
-        getGesture() {
-            if (!this.isTracking) return 'none';
-
-            const avgDist = this.fingerDistances.reduce((a, b) => a + b, 0) / 4;
-
-            let gesture = 'neutral';
-            if (avgDist < 0.08) gesture = 'fist';
-            else if (avgDist > 0.15) gesture = 'open';
-            else if (this.fingerDistances[0] > 0.12 && this.fingerDistances[1] < 0.08) {
-                gesture = 'point';
-            }
-
-            // Gesture smoothing for stability
-            this.gestureHistory.push(gesture);
-            if (this.gestureHistory.length > this.maxHistory) {
-                this.gestureHistory.shift();
-            }
-
-            // Return most common gesture
-            const counts = {};
-            this.gestureHistory.forEach(g => counts[g] = (counts[g] || 0) + 1);
-            return Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b);
-        }
-
-        getPalmWorld() {
-            return new THREE.Vector3(
-                this.smoothedPalm.x * 20,
-                this.smoothedPalm.y * 20,
-                this.smoothedPalm.z * 20
-            );
-        }
-    }
-
-    // ============================================
-    // SWORD SYSTEM MODULE
-    // ============================================
-    class SwordSystem {
-        constructor(count) {
-            this.count = count;
-            this.positions = [];
-            this.velocities = [];
-            this.targets = [];
-            this.state = 'SCATTER';
-            this.targetPoint = new THREE.Vector3();
-            this.orbitAngle = 0;
-
-            for (let i = 0; i < count; i++) {
-                this.positions.push(new THREE.Vector3(
-                    (Math.random() - 0.5) * 30,
-                    (Math.random() - 0.5) * 30,
-                    (Math.random() - 0.5) * 30
-                ));
-                this.velocities.push(new THREE.Vector3());
-                this.targets.push(new THREE.Vector3());
-            }
-        }
-
-        setState(newState, palmWorld) {
-            this.state = newState;
-            this.targetPoint.copy(palmWorld);
-            this.updateTargets();
-        }
-
-        updateTargets() {
-            const { state, targetPoint, count } = this;
-
-            for (let i = 0; i < count; i++) {
-                if (state === 'SCATTER') {
-                    const theta = Math.random() * Math.PI * 2;
-                    const phi = Math.acos(Math.random() * 2 - 1);
-                    const r = CONFIG.scatterRadius;
-                    this.targets[i].set(
-                        targetPoint.x + r * Math.sin(phi) * Math.cos(theta),
-                        targetPoint.y + r * Math.sin(phi) * Math.sin(theta),
-                        targetPoint.z + r * Math.cos(phi)
-                    );
-                } else if (state === 'ORBIT') {
-                    const angle = (i / count) * Math.PI * 2 + this.orbitAngle;
-                    const height = Math.sin(angle * 3) * 2;
-                    const r = CONFIG.orbitRadius;
-                    this.targets[i].set(
-                        targetPoint.x + Math.cos(angle) * r,
-                        targetPoint.y + height,
-                        targetPoint.z + Math.sin(angle) * r
-                    );
-                } else if (state === 'FORMATION') {
-                    const phi = Math.acos(1 - 2 * (i + 0.5) / count);
-                    const theta = Math.PI * (1 + Math.sqrt(5)) * i;
-                    const r = CONFIG.formationRadius;
-                    this.targets[i].set(
-                        targetPoint.x + r * Math.sin(phi) * Math.cos(theta),
-                        targetPoint.y + r * Math.sin(phi) * Math.sin(theta),
-                        targetPoint.z + r * Math.cos(phi)
-                    );
-                }
-            }
-        }
-
-        update(palmWorld) {
-            this.targetPoint.lerp(palmWorld, 0.1);
-
-            if (this.state === 'ORBIT') {
-                this.orbitAngle += 0.02;
-                this.updateTargets();
-            }
-
-            for (let i = 0; i < this.count; i++) {
-                const pos = this.positions[i];
-                const vel = this.velocities[i];
-                const target = this.targets[i];
-
-                const force = target.clone().sub(pos).multiplyScalar(CONFIG.attractionStrength);
-                vel.add(force);
-
-                const speed = vel.length();
-                if (speed > CONFIG.maxSpeed) {
-                    vel.multiplyScalar(CONFIG.maxSpeed / speed);
-                }
-
-                pos.add(vel);
-                vel.multiplyScalar(CONFIG.damping);
-            }
-        }
-
-        getInstanceMatrices() {
-            const matrices = [];
-            const dummy = new THREE.Object3D();
-
-            for (let i = 0; i < this.count; i++) {
-                const pos = this.positions[i];
-                const vel = this.velocities[i];
-
-                dummy.position.copy(pos);
-
-                if (vel.length() > 0.001) {
-                    dummy.lookAt(pos.clone().add(vel));
-                }
-
-                dummy.updateMatrix();
-                matrices.push(dummy.matrix.clone());
-            }
-
-            return matrices;
-        }
-    }
-
-    // ============================================
-    // MAIN APPLICATION
-    // ============================================
-    class GestureSwordApp {
-        constructor() {
-            this.setupThreeJS();
-            this.tracker = new HandTracker();
-            this.swordSystem = new SwordSystem(CONFIG.swordCount);
-            this.lastTime = performance.now();
-            this.frameCount = 0;
-            this.cameraReady = false;
-            
-            document.getElementById('count').textContent = CONFIG.swordCount;
-            
-            // Start button handler
-            document.getElementById('startBtn').addEventListener('click', () => {
-                this.initCamera();
-            });
-
-            this.render();
-        }
-
-        setupThreeJS() {
-            this.scene = new THREE.Scene();
-            this.scene.background = new THREE.Color(0x0a0a1a);
-
-            this.camera = new THREE.PerspectiveCamera(
-                60, 
-                window.innerWidth / window.innerHeight, 
-                0.1, 
-                1000
-            );
-            this.camera.position.z = isMobile ? 30 : 25;
-
-            const canvas = document.getElementById('canvas3d');
-            this.renderer = new THREE.WebGLRenderer({ 
-                canvas: canvas,
-                antialias: !isMobile, // Disable AA on mobile for performance
-                powerPreference: 'high-performance'
-            });
-            this.renderer.setSize(window.innerWidth, window.innerHeight);
-            this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-
-            // Lighting
-            const ambient = new THREE.AmbientLight(0x404040, 1);
-            this.scene.add(ambient);
-
-            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-            dirLight.position.set(5, 10, 7);
-            this.scene.add(dirLight);
-
-            // Sword geometry
-            const swordGeom = new THREE.CylinderGeometry(0.02, 0.02, 0.8, 6);
-            swordGeom.rotateZ(Math.PI / 2);
-            swordGeom.translate(0.4, 0, 0);
-
-            const swordMat = new THREE.MeshPhongMaterial({ 
-                color: 0x00ddff,
-                shininess: 100,
-                emissive: 0x003344
-            });
-
-            this.instancedMesh = new THREE.InstancedMesh(
-                swordGeom,
-                swordMat,
-                CONFIG.swordCount
-            );
-            this.scene.add(this.instancedMesh);
-
-            // Grid
-            const grid = new THREE.GridHelper(50, 50, 0x222244, 0x111122);
-            grid.position.y = -15;
-            this.scene.add(grid);
-
-            // Handle resize
-            window.addEventListener('resize', () => this.handleResize());
-            
-            // Handle orientation change (iOS)
-            window.addEventListener('orientationchange', () => {
-                setTimeout(() => this.handleResize(), 100);
-            });
-        }
-
-        handleResize() {
-            const width = window.innerWidth;
-            const height = window.innerHeight;
-            
-            this.camera.aspect = width / height;
-            this.camera.updateProjectionMatrix();
-            this.renderer.setSize(width, height);
-        }
-
-        async initCamera() {
-            const startBtn = document.getElementById('startBtn');
-            const status = document.getElementById('status');
-            const video = document.getElementById('video');
-
-            startBtn.style.display = 'none';
-            status.textContent = 'Requesting camera access...';
-
-            try {
-                // iOS requires getUserMedia before MediaPipe
-                const constraints = {
-                    video: {
-                        width: { ideal: CONFIG.videoWidth },
-                        height: { ideal: CONFIG.videoHeight },
-                        facingMode: 'user'
-                    },
-                    audio: false
-                };
-
-                const stream = await navigator.mediaDevices.getUserMedia(constraints);
-                video.srcObject = stream;
-                
-                // Wait for video to be ready
-                await new Promise((resolve) => {
-                    video.onloadedmetadata = () => {
-                        video.play();
-                        resolve();
-                    };
-                });
-
-                status.textContent = 'Loading hand detection...';
-                
-                // Initialize MediaPipe
-                await this.setupMediaPipe(video);
-                
-                video.style.display = 'block';
-                status.textContent = 'Ready! Show your hand';
-                this.cameraReady = true;
-
-            } catch (error) {
-                console.error('Camera error:', error);
-                status.textContent = 'Camera access denied. Please refresh and allow camera.';
-                status.style.background = 'rgba(255,0,0,0.8)';
-                
-                setTimeout(() => {
-                    startBtn.style.display = 'block';
-                    status.textContent = 'Click to retry';
-                }, 2000);
-            }
-        }
-
-        async setupMediaPipe(video) {
-            const hands = new Hands({
-                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-            });
-
-            hands.setOptions({
-                maxNumHands: 1,
-                modelComplexity: isMobile ? 0 : 1, // Lighter model for mobile
-                minDetectionConfidence: 0.7,
-                minTrackingConfidence: 0.7
-            });
-
-            hands.onResults((results) => {
-                this.tracker.update(results.multiHandLandmarks);
-                this.updateState();
-            });
-
-            // Manual frame processing for better iOS compatibility
-            const processFrame = async () => {
-                if (this.cameraReady && video.readyState === 4) {
-                    await hands.send({ image: video });
-                }
-                requestAnimationFrame(processFrame);
-            };
-
-            processFrame();
-        }
-
-        updateState() {
-            if (!this.tracker.isTracking) return;
-
-            const gesture = this.tracker.getGesture();
-            const palmWorld = this.tracker.getPalmWorld();
-
-            let newState = this.swordSystem.state;
-
-            if (gesture === 'open') newState = 'SCATTER';
-            else if (gesture === 'fist') newState = 'ORBIT';
-            else if (gesture === 'point') newState = 'FORMATION';
-
-            if (newState !== this.swordSystem.state) {
-                this.swordSystem.setState(newState, palmWorld);
-                document.getElementById('state').textContent = newState;
-            }
-        }
-
-        render() {
-            requestAnimationFrame(() => this.render());
-
-            const now = performance.now();
-            const delta = now - this.lastTime;
-
-            // Update swords
-            if (this.tracker.isTracking) {
-                const palmWorld = this.tracker.getPalmWorld();
-                this.swordSystem.update(palmWorld);
-            }
-
-            // Update instances
-            const matrices = this.swordSystem.getInstanceMatrices();
-            for (let i = 0; i < matrices.length; i++) {
-                this.instancedMesh.setMatrixAt(i, matrices[i]);
-            }
-            this.instancedMesh.instanceMatrix.needsUpdate = true;
-
-            // Render
-            this.renderer.render(this.scene, this.camera);
-
-            // FPS
-            this.frameCount++;
-            if (delta > 500) {
-                const fps = Math.round((this.frameCount * 1000) / delta);
-                document.getElementById('fps').textContent = fps;
-                this.frameCount = 0;
-                this.lastTime = now;
-            }
-        }
-    }
-
-    // Start when DOM ready
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => new GestureSwordApp());
-    } else {
-        new GestureSwordApp();
     }
 </script>
-```
 
+<script type="module">
+import * as THREE from 'three';
+
+/** --- CẤU HÌNH --- **/
+const SWORD_COUNT = 2000;
+const STATES = { SCATTER: 'SCATTER', ORBIT: 'ORBIT', FORMATION: 'FORMATION' };
+let currentState = STATES.ORBIT;
+
+/** --- HAND TRACKING MODULE (MEDIAPIPE) --- **/
+import { HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0";
+
+let handLandmarker;
+let lastVideoTime = -1;
+let handPos = new THREE.Vector3(0, 0, 0);
+let isGrip = false;
+
+async function initHandTracking() {
+    const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm");
+    handLandmarker = await HandLandmarker.createFromOptions(vision, {
+        baseOptions: { modelAssetPath: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`, delegate: "GPU" },
+        runningMode: "VIDEO", numHands: 1
+    });
+    startCamera();
+}
+
+async function startCamera() {
+    const video = document.getElementById("webcam");
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    video.srcObject = stream;
+    video.addEventListener("loadeddata", predictWebcam);
+}
+
+async function predictWebcam() {
+    const video = document.getElementById("webcam");
+    if (lastVideoTime !== video.currentTime) {
+        lastVideoTime = video.currentTime;
+        const result = handLandmarker.detectForVideo(video, performance.now());
+        if (result.landmarks && result.landmarks.length > 0) {
+            processHandData(result.landmarks[0]);
+        }
+    }
+    requestAnimationFrame(predictWebcam);
+}
+
+function processHandData(landmarks) {
+    // Lấy tọa độ lòng bàn tay (điểm số 9) và chuẩn hóa sang không gian 3D
+    const palm = landmarks[9];
+    handPos.x = (0.5 - palm.x) * 40; // Đảo trục X vì webcam bị ngược
+    handPos.y = (0.5 - palm.y) * 25;
+    
+    // Check cử chỉ: Tính khoảng cách ngón cái (4) và ngón út (20)
+    const dist = Math.hypot(landmarks[4].x - landmarks[20].x, landmarks[4].y - landmarks[20].y);
+    isGrip = dist < 0.12; 
+    
+    currentState = isGrip ? STATES.FORMATION : STATES.ORBIT;
+    document.getElementById("gesture").innerText = isGrip ? "Nắm tay (Formation)" : "Xòe tay (Orbit)";
+    document.getElementById("status").innerText = "Đang điều khiển";
+}
+
+/** --- SWORD SYSTEM MODULE (THREE.JS) --- **/
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// Tạo Geometery cho thanh kiếm (Dùng Cone mỏng để giả lập lưỡi kiếm)
+const geometry = new THREE.ConeGeometry(0.05, 1.2, 4);
+geometry.rotateX(Math.PI / 2); // Để kiếm hướng về phía trước
+const material = new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.8, roughness: 0.2 });
+const instancedMesh = new THREE.InstancedMesh(geometry, material, SWORD_COUNT);
+scene.add(instancedMesh);
+
+// Data cho từng thanh kiếm
+const swords = [];
+const dummy = new THREE.Object3D();
+
+for (let i = 0; i < SWORD_COUNT; i++) {
+    swords.push({
+        position: new THREE.Vector3((Math.random() - 0.5) * 50, (Math.random() - 0.5) * 50, (Math.random() - 0.5) * 50),
+        velocity: new THREE.Vector3(),
+        acceleration: new THREE.Vector3(),
+        maxSpeed: 0.5 + Math.random() * 0.5,
+        maxForce: 0.05 + Math.random() * 0.05
+    });
+}
+
+// Ánh sáng
+const light = new THREE.PointLight(0x00ffff, 1000, 100);
+scene.add(light);
+scene.add(new THREE.AmbientLight(0x404040));
+
+camera.position.z = 30;
+
+/** --- LOOP CẬP NHẬT --- **/
+function animate() {
+    requestAnimationFrame(animate);
+
+    light.position.copy(handPos);
+
+    for (let i = 0; i < SWORD_COUNT; i++) {
+        const s = swords[i];
+        const steer = new THREE.Vector3();
+
+        if (currentState === STATES.ORBIT) {
+            // Lực hút xoay quanh tay
+            const desired = new THREE.Vector3().subVectors(handPos, s.position);
+            const dist = desired.length();
+            const cross = new THREE.Vector3().crossVectors(desired, new THREE.Vector3(0, 1, 0)).normalize();
+            
+            desired.normalize().multiplyScalar(dist * 0.05); // Hút vào
+            steer.add(desired).add(cross.multiplyScalar(0.8)); // Xoay vòng
+        } 
+        else if (currentState === STATES.FORMATION) {
+            // Tập trung vào một điểm cố định (Formation tròn)
+            const angle = (i / SWORD_COUNT) * Math.PI * 2;
+            const target = new THREE.Vector3(
+                handPos.x + Math.cos(angle) * 5,
+                handPos.y + Math.sin(angle) * 5,
+                handPos.z
+            );
+            const desired = new THREE.Vector3().subVectors(target, s.position);
+            steer.add(desired.multiplyScalar(0.1));
+        }
+
+        // Vật lý cơ bản
+        s.velocity.add(steer).clampLength(0, s.maxSpeed);
+        s.position.add(s.velocity);
+
+        // Cập nhật Instanced Matrix
+        dummy.position.copy(s.position);
+        if (s.velocity.length() > 0.01) {
+            const lookTarget = s.position.clone().add(s.velocity);
+            dummy.lookAt(lookTarget);
+        }
+        dummy.updateMatrix();
+        instancedMesh.setMatrixAt(i, dummy.matrix);
+    }
+
+    instancedMesh.instanceMatrix.needsUpdate = true;
+    renderer.render(scene, camera);
+}
+
+// Khởi chạy
+initHandTracking();
+animate();
+
+// Resize xử lý
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+</script>
 </body>
 </html>
