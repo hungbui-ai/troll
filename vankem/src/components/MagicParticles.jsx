@@ -1,52 +1,83 @@
-import { useEffect, useRef, useState } from 'react';
-import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
+import React, { useRef, useMemo } from 'react';
+import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
-export function useHandTracking() {
-  const [handData, setHandData] = useState({ openAmount: 0, pos: new THREE.Vector3(0, 0, 0), isTracking: false });
-  const videoRef = useRef(null);
+export default function MagicParticles({ handData }) {
+  const mesh = useRef();
+  // Tăng số lượng hạt để nhìn đặc hơn (Lightsaber effect)
+  const count = 12000; 
 
-  useEffect(() => {
-    let handLandmarker;
-    let animationFrame;
-    const init = async () => {
-      const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm");
-      handLandmarker = await HandLandmarker.createFromOptions(vision, {
-        baseOptions: { 
-          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task", 
-          delegate: "GPU" 
-        },
-        runningMode: "VIDEO", numHands: 1
-      });
-
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.onloadeddata = () => {
-          const predict = () => {
-            if (videoRef.current && handLandmarker) {
-              const results = handLandmarker.detectForVideo(videoRef.current, performance.now());
-              if (results.landmarks?.length > 0) {
-                const l = results.landmarks[0];
-                // Tính độ xòe: dựa trên 4 ngón chính
-                const openFingers = [8, 12, 16, 20].filter(i => l[i].y < l[i - 2].y).length;
-                // LẤY ĐIỂM SỐ 8 (Đầu ngón trỏ) làm tâm điều khiển
-                const x = (0.5 - l[8].x) * 12; 
-                const y = (0.5 - l[8].y) * 8;
-                setHandData({ openAmount: openFingers / 4, pos: new THREE.Vector3(x, y, 0), isTracking: true });
-              } else {
-                setHandData(prev => ({ ...prev, isTracking: false, openAmount: 0 }));
-              }
-            }
-            animationFrame = requestAnimationFrame(predict);
-          };
-          predict();
-        };
-      }
-    };
-    init();
-    return () => cancelAnimationFrame(animationFrame);
+  const [positions, randoms] = useMemo(() => {
+    const p = new Float32Array(count * 3);
+    const r = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      const theta = Math.random() * 6.28, phi = Math.acos(Math.random() * 2 - 1), dist = 1.0 + Math.random() * 0.5;
+      p.set([dist * Math.sin(phi) * Math.cos(theta), dist * Math.sin(phi) * Math.sin(theta), dist * Math.cos(phi)], i * 3);
+      r.set([Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5], i * 3);
+    }
+    return [p, r];
   }, []);
 
-  return { videoRef, handData };
+  const uniforms = useMemo(() => ({
+    uTime: { value: 0 },
+    uExpansion: { value: 0 },
+    uHandPos: { value: new THREE.Vector3() },
+    uIsTracking: { value: 0 }
+  }), []);
+
+  useFrame((s) => {
+    uniforms.uTime.value = s.clock.elapsedTime;
+    uniforms.uExpansion.value = THREE.MathUtils.lerp(uniforms.uExpansion.value, handData.openAmount, 0.15);
+    uniforms.uHandPos.value.lerp(handData.pos, 0.2); // Tốc độ bám theo tay nhanh hơn
+    uniforms.uIsTracking.value = THREE.MathUtils.lerp(uniforms.uIsTracking.value, handData.isTracking ? 1 : 0, 0.1);
+  });
+
+  return (
+    <points ref={mesh}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" count={count} array={positions} itemSize={3} />
+        <bufferAttribute attach="attributes-aRandom" count={count} array={randoms} itemSize={3} />
+      </bufferGeometry>
+      <shaderMaterial transparent depthWrite={false} blending={THREE.AdditiveBlending} uniforms={uniforms}
+        vertexShader={`
+          uniform float uTime; uniform float uExpansion; uniform vec3 uHandPos; uniform float uIsTracking;
+          attribute vec3 aRandom; varying vec3 vColor;
+          void main() {
+            vec3 pos = position;
+            
+            // Logic Nổ khi xòe tay
+            pos += (normalize(pos) + aRandom) * uExpansion * 4.0;
+            
+            // Logic Hút và Xoáy cực mạnh khi có tay
+            if(uIsTracking > 0.1) {
+              vec3 target = uHandPos + aRandom * 0.2;
+              pos = mix(pos, target, 0.85 * uIsTracking);
+              
+              // Tạo hiệu ứng xoáy tròn quanh ngón tay
+              float angle = uTime * 8.0 + length(aRandom) * 10.0;
+              pos.x += cos(angle) * 0.15 * uIsTracking;
+              pos.y += sin(angle) * 0.15 * uIsTracking;
+            }
+
+            vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+            gl_PointSize = (6.0 + uExpansion * 15.0) * (1.0 / -mvPosition.z);
+            gl_Position = projectionMatrix * mvPosition;
+            
+            // Đổi màu rực rỡ hơn: Cyan sang Orange
+            vColor = mix(vec3(0.0, 1.0, 0.8), vec3(1.0, 0.4, 0.0), uExpansion);
+          }
+        `}
+        fragmentShader={`
+          varying vec3 vColor;
+          void main() {
+            float r = distance(gl_PointCoord, vec2(0.5));
+            if (r > 0.5) discard;
+            // Làm cho hạt rực sáng (Glow)
+            float strength = pow(1.0 - r * 2.0, 2.0);
+            gl_FragColor = vec4(vColor * strength * 2.5, 1.0);
+          }
+        `}
+      />
+    </points>
+  );
 }
