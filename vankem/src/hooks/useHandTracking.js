@@ -2,12 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
 import * as THREE from 'three';
 
-// PHẢI CÓ TỪ KHÓA export Ở ĐÂY
 export function useHandTracking() {
   const [handData, setHandData] = useState({ 
     openAmount: 0, 
     pos: new THREE.Vector3(0, 0, 0), 
-    basePos: new THREE.Vector3(0, 0, 0), // Thêm điểm gốc để làm kiếm
+    basePos: new THREE.Vector3(0, 0, 0), 
     isTracking: false 
   });
   const videoRef = useRef(null);
@@ -34,18 +33,12 @@ export function useHandTracking() {
               const results = handLandmarker.detectForVideo(videoRef.current, performance.now());
               if (results.landmarks?.length > 0) {
                 const l = results.landmarks[0];
-                const openFingers = [8, 12, 16, 20].filter(i => l[i].y < l[i - 2].y).length;
-
-                // Tọa độ đầu ngón trỏ (Tip) và gốc ngón trỏ (Base)
+                // Lấy đầu ngón (8) và gốc ngón trỏ (5)
                 const tip = new THREE.Vector3((0.5 - l[8].x) * 12, (0.5 - l[8].y) * 8, 0);
                 const base = new THREE.Vector3((0.5 - l[5].x) * 12, (0.5 - l[5].y) * 8, 0);
-
-                setHandData({ 
-                  openAmount: openFingers / 4, 
-                  pos: tip, 
-                  basePos: base, 
-                  isTracking: true 
-                });
+                // Tính độ mở bàn tay
+                const dist = Math.hypot(l[8].x - l[4].x, l[8].y - l[4].y);
+                setHandData({ openAmount: dist > 0.1 ? 1 : 0, pos: tip, basePos: base, isTracking: true });
               } else {
                 setHandData(prev => ({ ...prev, isTracking: false }));
               }
