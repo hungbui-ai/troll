@@ -4,77 +4,108 @@ import * as THREE from 'three';
 
 export default function MagicParticles({ handData }) {
   const mesh = useRef();
-  // Tăng số lượng hạt để nhìn đặc hơn (Lightsaber effect)
-  const count = 12000; 
+  const count = 15000; // Tăng lượng hạt để tạo độ đặc cho kiếm
 
-  const [positions, randoms] = useMemo(() => {
+  // Tạo các thuộc tính ngẫu nhiên cho từng hạt để quỹ đạo không hạt nào giống hạt nào
+  const [positions, aOffset] = useMemo(() => {
     const p = new Float32Array(count * 3);
-    const r = new Float32Array(count * 3);
+    const o = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
-      const theta = Math.random() * 6.28, phi = Math.acos(Math.random() * 2 - 1), dist = 1.0 + Math.random() * 0.5;
-      p.set([dist * Math.sin(phi) * Math.cos(theta), dist * Math.sin(phi) * Math.sin(theta), dist * Math.cos(phi)], i * 3);
-      r.set([Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5], i * 3);
+      // Khởi tạo hạt nằm rải rác trong hình cầu
+      const r = 2.0 * Math.pow(Math.random(), 0.5);
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2.0 * Math.random() - 1.0);
+      p.set([r * Math.sin(phi) * Math.cos(theta), r * Math.sin(phi) * Math.sin(theta), r * Math.cos(phi)], i * 3);
+      // aOffset dùng để tạo độ lệch pha khi xoáy
+      o.set([Math.random(), Math.random(), Math.random()], i * 3);
     }
-    return [p, r];
+    return [p, o];
   }, []);
 
   const uniforms = useMemo(() => ({
     uTime: { value: 0 },
-    uExpansion: { value: 0 },
     uHandPos: { value: new THREE.Vector3() },
+    uHandBase: { value: new THREE.Vector3() },
+    uExpansion: { value: 0 },
     uIsTracking: { value: 0 }
   }), []);
 
-  useFrame((s) => {
-    uniforms.uTime.value = s.clock.elapsedTime;
-    uniforms.uExpansion.value = THREE.MathUtils.lerp(uniforms.uExpansion.value, handData.openAmount, 0.15);
-    uniforms.uHandPos.value.lerp(handData.pos, 0.2); // Tốc độ bám theo tay nhanh hơn
-    uniforms.uIsTracking.value = THREE.MathUtils.lerp(uniforms.uIsTracking.value, handData.isTracking ? 1 : 0, 0.1);
+  useFrame((state) => {
+    const { clock } = state;
+    uniforms.uTime.value = clock.elapsedTime;
+    uniforms.uExpansion.value = THREE.MathUtils.lerp(uniforms.uExpansion.value, handData.openAmount, 0.1);
+    
+    // Tạo độ trễ mượt mà khi di chuyển tay (Smoothing)
+    uniforms.uHandPos.value.lerp(handData.pos, 0.15);
+    uniforms.uHandBase.value.lerp(handData.basePos || handData.pos, 0.15);
+    uniforms.uIsTracking.value = THREE.MathUtils.lerp(uniforms.uIsTracking.value, handData.isTracking ? 1 : 0, 0.05);
   });
 
   return (
     <points ref={mesh}>
       <bufferGeometry>
         <bufferAttribute attach="attributes-position" count={count} array={positions} itemSize={3} />
-        <bufferAttribute attach="attributes-aRandom" count={count} array={randoms} itemSize={3} />
+        <bufferAttribute attach="attributes-aOffset" count={count} array={aOffset} itemSize={3} />
       </bufferGeometry>
-      <shaderMaterial transparent depthWrite={false} blending={THREE.AdditiveBlending} uniforms={uniforms}
+      <shaderMaterial
+        transparent
+        depthWrite={false}
+        blending={THREE.AdditiveBlending}
+        uniforms={uniforms}
         vertexShader={`
-          uniform float uTime; uniform float uExpansion; uniform vec3 uHandPos; uniform float uIsTracking;
-          attribute vec3 aRandom; varying vec3 vColor;
+          uniform float uTime;
+          uniform vec3 uHandPos;
+          uniform vec3 uHandBase;
+          uniform float uExpansion;
+          uniform float uIsTracking;
+          attribute vec3 aOffset;
+          varying vec3 vColor;
+
           void main() {
             vec3 pos = position;
-            
-            // Logic Nổ khi xòe tay
-            pos += (normalize(pos) + aRandom) * uExpansion * 4.0;
-            
-            // Logic Hút và Xoáy cực mạnh khi có tay
+            float t = uTime * 2.0;
+
             if(uIsTracking > 0.1) {
-              vec3 target = uHandPos + aRandom * 0.2;
-              pos = mix(pos, target, 0.85 * uIsTracking);
+              // 1. Tạo trục kiếm nối từ Base tới Tip
+              float lerpPart = aOffset.y; // Dùng offset y để rải hạt dọc thân kiếm
+              vec3 swordPoint = mix(uHandBase, uHandPos, lerpPart * 1.5);
+
+              // 2. Thuật toán xoáy quỹ đạo (Orbiting)
+              // Các hạt sẽ xoay tròn quanh trục kiếm thay vì đứng yên
+              float angle = t + aOffset.x * 6.28;
+              float radius = 0.05 + aOffset.z * 0.2; // Độ dày của thân kiếm
               
-              // Tạo hiệu ứng xoáy tròn quanh ngón tay
-              float angle = uTime * 8.0 + length(aRandom) * 10.0;
-              pos.x += cos(angle) * 0.15 * uIsTracking;
-              pos.y += sin(angle) * 0.15 * uIsTracking;
+              vec3 orbit = vec3(cos(angle) * radius, sin(angle) * radius, sin(angle * 0.5) * radius);
+              
+              // 3. Hiệu ứng hút có quán tính
+              pos = mix(pos, swordPoint + orbit, 0.9 * uIsTracking);
+            } else {
+              // Khi không có tay, hạt bay lơ lửng chậm rãi
+              pos += sin(t * aOffset + aOffset * 10.0) * 0.2;
             }
 
+            // Hiệu ứng nổ khi xòe tay
+            pos += normalize(pos) * uExpansion * 5.0;
+
             vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
-            gl_PointSize = (6.0 + uExpansion * 15.0) * (1.0 / -mvPosition.z);
-            gl_Position = projectionMatrix * mvPosition;
             
-            // Đổi màu rực rỡ hơn: Cyan sang Orange
-            vColor = mix(vec3(0.0, 1.0, 0.8), vec3(1.0, 0.4, 0.0), uExpansion);
+            // Kích thước hạt biến thiên tạo hiệu ứng lấp lánh (Twinkle)
+            float size = (8.0 + sin(t * 5.0 + aOffset.x * 10.0) * 4.0);
+            gl_PointSize = size * (1.0 / -mvPosition.z);
+            gl_Position = projectionMatrix * mvPosition;
+
+            // Màu sắc: Cyan rực rỡ pha tím ma mị
+            vColor = mix(vec3(0.0, 1.0, 1.0), vec3(0.8, 0.2, 1.0), uExpansion + aOffset.z * 0.5);
           }
         `}
         fragmentShader={`
           varying vec3 vColor;
           void main() {
-            float r = distance(gl_PointCoord, vec2(0.5));
-            if (r > 0.5) discard;
-            // Làm cho hạt rực sáng (Glow)
-            float strength = pow(1.0 - r * 2.0, 2.0);
-            gl_FragColor = vec4(vColor * strength * 2.5, 1.0);
+            float d = distance(gl_PointCoord, vec2(0.5));
+            if (d > 0.5) discard;
+            // Tạo quầng sáng mềm (Soft particles)
+            float f = pow(1.0 - d * 2.0, 2.0);
+            gl_FragColor = vec4(vColor * f * 2.0, f);
           }
         `}
       />
